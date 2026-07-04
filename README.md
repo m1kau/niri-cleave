@@ -34,4 +34,4 @@ spawn-at-startup "/path/to/cleave"
 
 ## Credit
  
-Inspired by [niri_tile_to_n.py](https://github.com/heyoeyo/niri_tweaks), which does this a whole lot better and more in Python.
+Inspired by [niri_tile_to_n.py](https://github.com/heyoeyo/niri_tweaks), which does this and more in Python.

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use niri_ipc::socket::Socket;
-use niri_ipc::{Action, Event, Request, Response, Window, Workspace};
+use niri_ipc::{Action, Event, Request, Response, Window, Workspace, SizeChange};
 
 const FULL_WIDTH_THRESHOLD: f64 = 0.8;
 
@@ -29,13 +29,14 @@ impl Desktop {
             .collect()
     }
 
-    fn is_full_width(&self, window: &Window) -> bool {
-        let Some(ws_id) = window.workspace_id else { return false };
-        let Some(ws) = self.workspaces.get(&ws_id) else { return false };
-        let Some(output) = ws.output.as_ref() else { return false };
-        let Some(monitor_width) = self.monitor_widths.get(output) else { return false };
+    fn width_fraction(&self, window: &Window) -> Option<f64> {
+        let ws = self.workspaces.get(&window.workspace_id?)?;
+        let monitor = self.monitor_widths.get(ws.output.as_ref()?)?;
+        Some(window.layout.tile_size.0 / monitor)
+    }
 
-        window.layout.tile_size.0 / monitor_width > FULL_WIDTH_THRESHOLD
+    fn is_full_width(&self, window: &Window) -> bool {
+        self.width_fraction(window).is_some_and(|f| f > FULL_WIDTH_THRESHOLD)
     }
 
     fn cleave(&self, ws_id: u64) -> std::io::Result<()> {
@@ -46,14 +47,14 @@ impl Desktop {
                 let solo = tiled[0];
                 if !self.is_full_width(solo) {
                     println!("cleave: workspace {ws_id}: solo window {} -> maximizing", solo.id);
-                    toggle_full_width(solo.id, self.focused)?;
+                    on_column(solo.id, self.focused, Action::MaximizeColumn {})?;
                 }
             }
             2.. => {
                 for win in &tiled {
                     if self.is_full_width(win) {
                         println!("cleave: workspace {ws_id}: window {} maximized -> splitting", win.id);
-                        toggle_full_width(win.id, self.focused)?;
+                        on_column(win.id, self.focused, Action::SetColumnWidth { change: SizeChange::SetProportion(50.0) })?;
                     }
                 }
             }
@@ -72,18 +73,14 @@ fn dispatch(action: Action) -> std::io::Result<()> {
     Ok(())
 }
 
-fn toggle_full_width(target: u64, focused: Option<u64>) -> std::io::Result<()> {
-    match focused {
-        Some(fid) if fid == target => {
-            dispatch(Action::MaximizeColumn {})?;
-        }
-        _ => {
-            dispatch(Action::FocusWindow { id: target })?;
-            dispatch(Action::MaximizeColumn {})?;
-            if let Some(fid) = focused {
-                dispatch(Action::FocusWindow { id: fid })?;
-            }
-        }
+fn on_column(target: u64, focused: Option<u64>, action: Action) -> std::io::Result<()> {
+    if focused == Some(target) {
+        return dispatch(action);
+    }
+    dispatch(Action::FocusWindow { id: target })?;
+    dispatch(action)?;
+    if let Some(fid) = focused {
+        dispatch(Action::FocusWindow { id: fid })?;
     }
     Ok(())
 }
@@ -140,11 +137,23 @@ fn main() -> std::io::Result<()> {
 
                 if brand_new && !floating {
                     if let Some(ws_id) = ws {
+                        let incumbent_frac = {
+                            let tiled = desk.tiled_on(ws_id);
+                            if tiled.len() == 2 {
+                                tiled.iter().find(|w| w.id != id).and_then(|w| desk.width_fraction(w)) }
+                            else { None }
+                        };
                         desk.cleave(ws_id)?;
+
+                        if let Some(frac) = incumbent_frac {
+                            let incumbent_now = if frac > FULL_WIDTH_THRESHOLD { 0.5 } else { frac };
+                            let mine = ((1.0 - incumbent_now) * 100.0).clamp(10.0, 90.0);
+                            println!("cleave: workspace {ws_id}: sizing new window {id} to {mine:.0}%");
+                            on_column(id, desk.focused, Action::SetColumnWidth { change: SizeChange::SetProportion(mine) })?;
+                        }
                     }
                 }
             }
-
             Event::WindowClosed { id } => {
                 if let Some(departed) = desk.windows.remove(&id) {
                     if let Some(ws_id) = departed.workspace_id {
