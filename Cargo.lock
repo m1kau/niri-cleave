@@ -19,7 +19,6 @@ name = "niri-cleave"
 version = "0.1.0"
 dependencies = [
  "niri-ipc",
- "serde_json",
 ]
 
 [[package]]
