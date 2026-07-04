@@ -1,0 +1,12 @@
+[package]
+name = "niri-cleave"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "cleave"
+path = "src/main.rs"
+
+[dependencies]
+niri-ipc = "26.4.0"
+serde_json = "1.0.150"
